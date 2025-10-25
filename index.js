@@ -52,11 +52,12 @@ fastify.all('/voice', async (request, reply) => {
     console.log('Incoming call detected');
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-    <Response>
-        <Connect>
-            <Stream url="wss://${request.headers.host}/media-stream" />
-        </Connect>
-    </Response>`;
+        <Response>
+            <Say language="da-DK">Dirty Ranch Steakhouse du taler med Ava. Hvad kan jeg hjælpe dig med?</Say>
+            <Connect>
+                <Stream url="wss://${request.headers.host}/media-stream" />
+            </Connect>
+        </Response>`;
 
     reply.type('text/xml').send(twimlResponse);
 });
