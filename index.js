@@ -10,7 +10,7 @@ import fetch from 'node-fetch';
 dotenv.config();
 
 // Retrieve environment variables
-const { OPENAI_API_KEY, WEBHOOK_URL } = process.env;
+const { OPENAI_API_KEY, WEBHOOK_URL, SYSTEM_MESSAGE } = process.env;
 
 if (!OPENAI_API_KEY) {
     console.error('Missing OpenAI API key. Please set it in the .env file or in Render environment settings.');
@@ -23,8 +23,6 @@ fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
 // Constants
-const SYSTEM_MESSAGE =
-    'You are an AI receptionist for Barts Automotive. Your job is to politely engage with the client and obtain their name, availability, and service/work required. Ask one question at a time. Do not ask for other contact information, and do not check availability, assume we are free. Ensure the conversation remains friendly and professional, and guide the user to provide these details naturally. If necessary, ask follow-up questions to gather the required information.';
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050;
 
