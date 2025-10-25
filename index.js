@@ -52,12 +52,11 @@ fastify.all('/voice', async (request, reply) => {
     console.log('Incoming call detected');
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-        <Response>
-            <Say language="da-DK">Dirty Ranch Steakhouse du taler med Ava. Hvad kan jeg hjælpe dig med?</Say>
-            <Connect>
-                <Stream url="wss://${request.headers.host}/media-stream" />
-            </Connect>
-        </Response>`;
+    <Response>
+        <Connect>
+            <Stream url="wss://${request.headers.host}/media-stream" />
+        </Connect>
+    </Response>`;
 
     reply.type('text/xml').send(twimlResponse);
 });
@@ -85,7 +84,11 @@ fastify.register(async (fastify) => {
             const sessionUpdate = {
                 type: 'session.update',
                 session: {
-                    turn_detection: { type: 'server_vad' },
+                    turn_detection: {
+                        type: 'server_vad',
+                        threshold: 0.5,
+                        silence_duration: 800
+                    },
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
@@ -101,8 +104,20 @@ fastify.register(async (fastify) => {
         };
 
         openAiWs.on('open', () => {
-            console.log('Connected to the OpenAI Realtime API');
-            setTimeout(sendSessionUpdate, 250);
+        console.log('Connected to the OpenAI Realtime API');
+        setTimeout(sendSessionUpdate, 250);
+
+        // Start samtalen
+        setTimeout(() => {
+            const initialResponse = {
+            type: "response.create",
+            response: {
+                instructions: "Start samtalen med at sige: 'Hej, du har ringet til Dirty Ranch Steakhouse. Du taler med Ava – hvordan kan jeg hjælpe dig i dag?'",
+                modalities: ["audio", "text"]
+            }
+            };
+            openAiWs.send(JSON.stringify(initialResponse));
+        }, 500);
         });
 
         openAiWs.on('message', (data) => {
@@ -249,7 +264,7 @@ async function sendToWebhook(payload) {
         return;
     }
 
-    console.log('📤 Sending data to webhook:', JSON.stringify(payload, null, 2));
+    console.log('Sending data to webhook:', JSON.stringify(payload, null, 2));
     try {
         const response = await fetch(WEBHOOK_URL, {
             method: 'POST',
@@ -279,7 +294,7 @@ async function processTranscriptAndSend(transcript, sessionId = null) {
         }
 
         const parsedContent = JSON.parse(content);
-        console.log('🪄 Extracted details:', parsedContent);
+        console.log('Extracted details:', parsedContent);
 
         await sendToWebhook(parsedContent);
     } catch (error) {
