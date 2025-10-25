@@ -85,11 +85,7 @@ fastify.register(async (fastify) => {
             const sessionUpdate = {
                 type: 'session.update',
                 session: {
-                    turn_detection: {
-                        type: 'server_vad',
-                        threshold: 0.5,
-                        silence_duration: 800
-                    },
+                    turn_detection: { type: 'server_vad' },
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
