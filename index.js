@@ -13,7 +13,7 @@ dotenv.config();
 const { OPENAI_API_KEY, WEBHOOK_URL } = process.env;
 
 if (!OPENAI_API_KEY) {
-    console.error('❌ Missing OpenAI API key. Please set it in the .env file or in Render environment settings.');
+    console.error('Missing OpenAI API key. Please set it in the .env file or in Render environment settings.');
     process.exit(1);
 }
 
@@ -46,12 +46,12 @@ const LOG_EVENT_TYPES = [
 
 // Root Route
 fastify.get('/', async (request, reply) => {
-    reply.send({ message: '✅ Twilio Media Stream Server is running!' });
+    reply.send({ message: 'Twilio Media Stream Server is running!' });
 });
 
 // Route for Twilio to handle incoming and outgoing calls
-fastify.all('/incoming-call', async (request, reply) => {
-    console.log('☎️ Incoming call detected');
+fastify.all('/voice', async (request, reply) => {
+    console.log('Incoming call detected');
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
         <Response>
@@ -67,7 +67,7 @@ fastify.all('/incoming-call', async (request, reply) => {
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
-        console.log('🔗 Client connected to /media-stream');
+        console.log('Client connected to /media-stream');
 
         const sessionId = req.headers['x-twilio-call-sid'] || `session_${Date.now()}`;
         let session = sessions.get(sessionId) || { transcript: '', streamSid: null };
@@ -103,7 +103,7 @@ fastify.register(async (fastify) => {
         };
 
         openAiWs.on('open', () => {
-            console.log('✅ Connected to the OpenAI Realtime API');
+            console.log('Connected to the OpenAI Realtime API');
             setTimeout(sendSessionUpdate, 250);
         });
 
@@ -112,14 +112,14 @@ fastify.register(async (fastify) => {
                 const response = JSON.parse(data);
 
                 if (LOG_EVENT_TYPES.includes(response.type)) {
-                    console.log(`📨 Event: ${response.type}`);
+                    console.log(`Event: ${response.type}`);
                 }
 
                 // Handle user speech transcription
                 if (response.type === 'conversation.item.input_audio_transcription.completed') {
                     const userMessage = response.transcript.trim();
                     session.transcript += `User: ${userMessage}\n`;
-                    console.log(`🗣️ User (${sessionId}): ${userMessage}`);
+                    console.log(`User (${sessionId}): ${userMessage}`);
                 }
 
                 // Handle AI responses
@@ -129,7 +129,7 @@ fastify.register(async (fastify) => {
                             (content) => content.transcript
                         )?.transcript || 'Agent message not found';
                     session.transcript += `Agent: ${agentMessage}\n`;
-                    console.log(`🤖 Agent (${sessionId}): ${agentMessage}`);
+                    console.log(`Agent (${sessionId}): ${agentMessage}`);
                 }
 
                 // Handle audio output
@@ -142,7 +142,7 @@ fastify.register(async (fastify) => {
                     connection.send(JSON.stringify(audioDelta));
                 }
             } catch (error) {
-                console.error('⚠️ Error processing OpenAI message:', error, 'Raw message:', data);
+                console.error('Error processing OpenAI message:', error, 'Raw message:', data);
             }
         });
 
@@ -163,32 +163,32 @@ fastify.register(async (fastify) => {
                         break;
                     case 'start':
                         session.streamSid = data.start.streamSid;
-                        console.log('🎧 Incoming stream started', session.streamSid);
+                        console.log('Incoming stream started', session.streamSid);
                         break;
                     default:
-                        console.log('ℹ️ Non-media event:', data.event);
+                        console.log('Non-media event:', data.event);
                         break;
                 }
             } catch (error) {
-                console.error('⚠️ Error parsing message:', error);
+                console.error('Error parsing message:', error);
             }
         });
 
         connection.on('close', async () => {
             if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
-            console.log(`🔌 Client disconnected (${sessionId})`);
-            console.log('🧾 Full Transcript:\n', session.transcript);
+            console.log(`Client disconnected (${sessionId})`);
+            console.log('Full Transcript:\n', session.transcript);
 
             await processTranscriptAndSend(session.transcript, sessionId);
             sessions.delete(sessionId);
         });
 
-        openAiWs.on('close', () => console.log('🔕 Disconnected from OpenAI Realtime API'));
-        openAiWs.on('error', (error) => console.error('❗ OpenAI WebSocket Error:', error));
+        openAiWs.on('close', () => console.log('Disconnected from OpenAI Realtime API'));
+        openAiWs.on('error', (error) => console.error('OpenAI WebSocket Error:', error));
     });
 });
 
-// ✅ IMPORTANT: Bind to 0.0.0.0 for Render
+// IMPORTANT: Bind to 0.0.0.0 for Render
 fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
     if (err) {
         console.error(err);
@@ -200,7 +200,7 @@ fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
 // ====== Helper Functions ======
 
 async function makeChatGPTCompletion(transcript) {
-    console.log('💬 Starting ChatGPT API call...');
+    console.log('Starting ChatGPT API call...');
     try {
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -237,17 +237,17 @@ async function makeChatGPTCompletion(transcript) {
         });
 
         const data = await response.json();
-        console.log('✅ ChatGPT API response received.');
+        console.log('ChatGPT API response received.');
         return data;
     } catch (error) {
-        console.error('❌ Error in makeChatGPTCompletion:', error);
+        console.error('Error in makeChatGPTCompletion:', error);
         throw error;
     }
 }
 
 async function sendToWebhook(payload) {
     if (!WEBHOOK_URL) {
-        console.warn('⚠️ WEBHOOK_URL not defined. Skipping webhook call.');
+        console.warn('WEBHOOK_URL not defined. Skipping webhook call.');
         return;
     }
 
@@ -260,23 +260,23 @@ async function sendToWebhook(payload) {
         });
 
         if (response.ok) {
-            console.log('✅ Data successfully sent to webhook.');
+            console.log('Data successfully sent to webhook.');
         } else {
-            console.error('❌ Webhook failed:', response.statusText);
+            console.error('Webhook failed:', response.statusText);
         }
     } catch (error) {
-        console.error('⚠️ Error sending data to webhook:', error);
+        console.error('Error sending data to webhook:', error);
     }
 }
 
 async function processTranscriptAndSend(transcript, sessionId = null) {
-    console.log(`🧠 Processing transcript for session ${sessionId}...`);
+    console.log(`Processing transcript for session ${sessionId}...`);
     try {
         const result = await makeChatGPTCompletion(transcript);
 
         const content = result?.choices?.[0]?.message?.content;
         if (!content) {
-            console.error('⚠️ Unexpected response structure from ChatGPT');
+            console.error('Unexpected response structure from ChatGPT');
             return;
         }
 
@@ -285,6 +285,6 @@ async function processTranscriptAndSend(transcript, sessionId = null) {
 
         await sendToWebhook(parsedContent);
     } catch (error) {
-        console.error('❌ Error in processTranscriptAndSend:', error);
+        console.error('Error in processTranscriptAndSend:', error);
     }
 }
