@@ -53,7 +53,7 @@ fastify.all('/voice', async (request, reply) => {
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
         <Response>
-            <Say language="da-DK">Hej, du har ringet til Dirty Ranch Steakhouse. Et øjeblik, så får du kontakt til vores digitale receptionist.</Say>
+            <Say language="da-DK">Dirty Ranch Steakhouse du taler med Ava. Hvad kan jeg hjælpe dig med?</Say>
             <Connect>
                 <Stream url="wss://${request.headers.host}/media-stream" />
             </Connect>
