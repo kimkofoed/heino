@@ -104,20 +104,8 @@ fastify.register(async (fastify) => {
         };
 
         openAiWs.on('open', () => {
-        console.log('Connected to the OpenAI Realtime API');
-        setTimeout(sendSessionUpdate, 250);
-
-        // Start samtalen
-        setTimeout(() => {
-            const initialResponse = {
-            type: "response.create",
-            response: {
-                instructions: "Start samtalen med at sige: 'Hej, du har ringet til Dirty Ranch Steakhouse. Du taler med Ava – hvordan kan jeg hjælpe dig i dag?'",
-                modalities: ["audio", "text"]
-            }
-            };
-            openAiWs.send(JSON.stringify(initialResponse));
-        }, 500);
+            console.log('Connected to the OpenAI Realtime API');
+            setTimeout(sendSessionUpdate, 250);
         });
 
         openAiWs.on('message', (data) => {
