@@ -21,7 +21,6 @@ if (!OPENAI_API_KEY) {
 const fastify = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
- 
 // Constants
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050;
@@ -53,13 +52,9 @@ fastify.all('/voice', async (request, reply) => {
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
         <Response>
-            <Say language="da-DK">.</Say>
+            <Say language="da-DK">Dirty Ranch Steakhouse du taler med Ava. Hvad kan jeg hjælpe dig med?</Say>
             <Connect>
-                <Stream 
-                    url="wss://${request.headers.host}/media-stream"
-                    track="both_tracks"
-                    audioFormat="audio/opus;rate=16000"
-                />
+                <Stream url="wss://${request.headers.host}/media-stream" />
             </Connect>
         </Response>`;
 
