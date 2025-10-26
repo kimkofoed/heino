@@ -21,7 +21,7 @@ if (!OPENAI_API_KEY) {
 const fastify = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
-
+ 
 // Constants
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050;
@@ -53,9 +53,12 @@ fastify.all('/voice', async (request, reply) => {
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
         <Response>
-            <Say language="da-DK">Dirty Ranch Steakhouse du taler med Ava. Hvad kan jeg hjælpe dig med?</Say>
             <Connect>
-                <Stream url="wss://${request.headers.host}/media-stream" />
+                <Stream 
+                    url="wss://${request.headers.host}/media-stream"
+                    track="both_tracks"
+                    audioFormat="audio/opus;rate=16000"
+                />
             </Connect>
         </Response>`;
 
@@ -86,23 +89,39 @@ fastify.register(async (fastify) => {
                 type: 'session.update',
                 session: {
                     turn_detection: { type: 'server_vad' },
-                    input_audio_format: 'g711_ulaw',
-                    output_audio_format: 'g711_ulaw',
+                    input_audio_format: 'opus_16000',
+                    output_audio_format: 'opus_16000',
                     voice: VOICE,
-                    instructions: SYSTEM_MESSAGE,
+                    instructions: SYSTEM_MESSAGE || 
+                        "Du er en dansk stemmeassistent. Tal naturligt dansk og vær venlig. Forvent danske navne og stednavne.",
                     modalities: ['text', 'audio'],
                     temperature: 0.8,
                     input_audio_transcription: { model: 'whisper-1' },
                 },
             };
 
-            console.log('🛰️ Sending session update to OpenAI');
+            console.log('Sending session update to OpenAI');
             openAiWs.send(JSON.stringify(sessionUpdate));
         };
 
         openAiWs.on('open', () => {
             console.log('Connected to the OpenAI Realtime API');
-            setTimeout(sendSessionUpdate, 250);
+
+            // Send initial config + start message
+            setTimeout(() => {
+                sendSessionUpdate();
+
+                const initialGreeting = {
+                    type: 'response.create',
+                    response: {
+                        instructions:
+                            'Start samtalen på dansk med: "Hej, du taler med Ava fra Dirty Ranch Steakhouse. Hvordan kan jeg hjælpe dig i dag?"',
+                        modalities: ['audio'],
+                        voice: VOICE,
+                    },
+                };
+                openAiWs.send(JSON.stringify(initialGreeting));
+            }, 300);
         });
 
         openAiWs.on('message', (data) => {
@@ -192,11 +211,10 @@ fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
         console.error(err);
         process.exit(1);
     }
-    console.log(`🚀 Server is listening on port ${PORT}`);
+    console.log(`Server is listening on port ${PORT}`);
 });
 
 // ====== Helper Functions ======
-
 async function makeChatGPTCompletion(transcript) {
     console.log('Starting ChatGPT API call...');
     try {
