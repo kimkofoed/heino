@@ -43,16 +43,21 @@ fastify.get('/health', async (_, reply) => {
 
 fastify.all('/voice', async (req, reply) => {
   console.log('📞 Incoming call detected');
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+
+  const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
   <Response>
     <Say language="da-DK"></Say>
+    <Pause length="1"/>
     <Connect>
-      <Stream url="wss://${req.headers.host}/media-stream"
-              track="both_tracks"
-              audioFormat="audio/ulaw" />
+      <Stream
+        url="wss://twilio-demo-q5pd.onrender.com/media-stream"
+        track="both_tracks"
+        audioFormat="audio/ulaw"
+      />
     </Connect>
   </Response>`;
-  reply.type('text/xml').send(twiml);
+
+  reply.type('text/xml').send(twimlResponse);
 });
 
 // --- WebSocket handler ---
