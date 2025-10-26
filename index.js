@@ -54,6 +54,11 @@ fastify.get('/', async (request, reply) => {
     reply.send({ message: 'Twilio Media Stream Server is running!' });
 });
 
+// ✅ NEW: Health-check route for Render
+fastify.get('/health', async (request, reply) => {
+    reply.code(200).send({ status: 'ok' });
+});
+
 // ✅ UPDATED: Twilio incoming call handler
 fastify.all('/voice', async (request, reply) => {
     console.log('Incoming call');
@@ -112,9 +117,7 @@ fastify.register(async (fastify) => {
                     instructions: SYSTEM_MESSAGE,
                     modalities: ["text", "audio"],
                     temperature: 0.8,
-                    input_audio_transcription: {
-                        model: "whisper-1"
-                    }
+                    input_audio_transcription: { model: "whisper-1" }
                 }
             };
             console.log('Sending session update:', JSON.stringify(sessionUpdate));
@@ -141,7 +144,7 @@ fastify.register(async (fastify) => {
                 }
 
                 if (response.type === 'response.done') {
-                    const agentMessage = response.response.output[0]?.content?.find(content => content.transcript)?.transcript || 'Agent message not found';
+                    const agentMessage = response.response.output[0]?.content?.find(c => c.transcript)?.transcript || 'Agent message not found';
                     session.transcript += `Agent: ${agentMessage}\n`;
                     console.log(`Agent (${sessionId}): ${agentMessage}`);
                 }
@@ -166,15 +169,13 @@ fastify.register(async (fastify) => {
         connection.on('message', (message) => {
             try {
                 const data = JSON.parse(message);
-
                 switch (data.event) {
                     case 'media':
                         if (openAiWs.readyState === WebSocket.OPEN) {
-                            const audioAppend = {
+                            openAiWs.send(JSON.stringify({
                                 type: 'input_audio_buffer.append',
                                 audio: data.media.payload
-                            };
-                            openAiWs.send(JSON.stringify(audioAppend));
+                            }));
                         }
                         break;
                     case 'start':
@@ -200,13 +201,8 @@ fastify.register(async (fastify) => {
             sessions.delete(sessionId);
         });
 
-        openAiWs.on('close', () => {
-            console.log('Disconnected from the OpenAI Realtime API');
-        });
-
-        openAiWs.on('error', (error) => {
-            console.error('Error in the OpenAI WebSocket:', error);
-        });
+        openAiWs.on('close', () => console.log('Disconnected from the OpenAI Realtime API'));
+        openAiWs.on('error', (error) => console.error('Error in the OpenAI WebSocket:', error));
     });
 });
 
@@ -252,9 +248,8 @@ async function makeChatGPTCompletion(transcript) {
             })
         });
 
-        console.log('ChatGPT API response status:', response.status);
         const data = await response.json();
-        console.log('Full ChatGPT API response:', JSON.stringify(data, null, 2));
+        console.log('ChatGPT API response:', JSON.stringify(data, null, 2));
         return data;
     } catch (error) {
         console.error('Error making ChatGPT completion call:', error);
@@ -271,13 +266,9 @@ async function sendToWebhook(payload) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-
         console.log('Webhook response status:', response.status);
-        if (response.ok) {
-            console.log('Data successfully sent to webhook.');
-        } else {
-            console.error('Failed to send data to webhook:', response.statusText);
-        }
+        if (response.ok) console.log('Data successfully sent to webhook.');
+        else console.error('Failed to send data to webhook:', response.statusText);
     } catch (error) {
         console.error('Error sending data to webhook:', error);
     }
@@ -288,7 +279,6 @@ async function processTranscriptAndSend(transcript, sessionId = null) {
     console.log(`Starting transcript processing for session ${sessionId}...`);
     try {
         const result = await makeChatGPTCompletion(transcript);
-
         if (result.choices && result.choices[0]?.message?.content) {
             const parsedContent = JSON.parse(result.choices[0].message.content);
             await sendToWebhook(parsedContent);
