@@ -21,10 +21,10 @@ fastify.register(fastifyWs);
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050;
 const sessions = new Map();
-const INACTIVITY_TIMEOUT = 20000; // 20 sek. tavshed = afslutning
+const INACTIVITY_TIMEOUT = 20000; // 20 sekunders tavshed = afslutning
 
-// ===== 🌍 Status Routes =====
-fastify.get('/', async (req, reply) => {
+// ===== 🌍 STATUS ROUTES =====
+fastify.get('/', async (_, reply) => {
   reply.send({
     status: 'ok',
     message: 'Twilio + OpenAI voice server is running 🚀',
@@ -32,11 +32,11 @@ fastify.get('/', async (req, reply) => {
   });
 });
 
-fastify.get('/health', async (req, reply) => {
+fastify.get('/health', async (_, reply) => {
   reply.send({ ok: true });
 });
 
-// ===== Twilio Voice Route =====
+// ===== TWILIO ENTRY =====
 fastify.all('/voice', async (req, reply) => {
   console.log('📞 Incoming call detected');
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -49,24 +49,28 @@ fastify.all('/voice', async (req, reply) => {
   reply.type('text/xml').send(twiml.trim());
 });
 
-// ===== WebSocket handler =====
+// ===== MEDIA STREAM HANDLER =====
 fastify.register(async (fastify) => {
   fastify.get('/media-stream', { websocket: true }, (conn, req) => {
     const sessionId = req.headers['x-twilio-call-sid'] || `session_${Date.now()}`;
     console.log(`🧩 Twilio connected: ${sessionId}`);
-    let session = {
+
+    const session = {
       id: sessionId,
       transcript: '',
       streamSid: null,
       inactivityTimer: null,
       greeted: false,
+      openAiReady: false,
+      twilioReady: false,
     };
+
     sessions.set(sessionId, session);
     connectToOpenAI(conn, session);
   });
 });
 
-// ===== Connect to OpenAI =====
+// ===== CONNECT TO OPENAI REALTIME =====
 function connectToOpenAI(conn, session) {
   const openAiWs = new WebSocket(
     'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
@@ -82,7 +86,7 @@ function connectToOpenAI(conn, session) {
     if (session.inactivityTimer) clearTimeout(session.inactivityTimer);
     session.inactivityTimer = setTimeout(() => {
       console.log('⏳ Tavshed – afslutter opkald...');
-      endCall(conn, session, 'Inaktivitet');
+      gracefulHangup(conn, session, 'Inaktivitet');
     }, INACTIVITY_TIMEOUT);
   };
 
@@ -107,6 +111,10 @@ function connectToOpenAI(conn, session) {
 
   const sendGreeting = () => {
     if (session.greeted) return;
+    if (!session.twilioReady || !session.openAiReady) {
+      console.log('⚠️ Afventer klarhed før greeting...');
+      return;
+    }
     session.greeted = true;
     console.log('🎙️ Sender dansk hilsen...');
     const greeting = {
@@ -121,19 +129,35 @@ function connectToOpenAI(conn, session) {
     openAiWs.send(JSON.stringify(greeting));
   };
 
+  const sendFarewell = async () => {
+    console.log('💬 Ava siger farvel...');
+    const farewell = {
+      type: 'response.create',
+      response: {
+        instructions:
+          'Sig venligt på dansk: "Det var en fornøjelse at hjælpe dig. Tak fordi du ringede, og ha’ en rigtig god dag!"',
+        modalities: ['audio'],
+        voice: VOICE,
+      },
+    };
+    openAiWs.send(JSON.stringify(farewell));
+    setTimeout(() => endCall(conn, session, 'Farvel'), 3500);
+  };
+
+  // ====== OPENAI WEBSOCKET HANDLERS ======
   openAiWs.on('open', () => {
     console.log('✅ Forbundet til OpenAI Realtime API');
-    setTimeout(() => sendSessionUpdate(true), 250);
+    setTimeout(() => sendSessionUpdate(true), 300);
   });
 
   openAiWs.on('message', (data) => {
     try {
       const event = JSON.parse(data);
 
-      // Når sessionen er klar – AI må tale først
       if (event.type === 'session.created') {
+        session.openAiReady = true;
         console.log('🟢 OpenAI session klar');
-        setTimeout(sendGreeting, 500);
+        if (session.twilioReady && !session.greeted) setTimeout(sendGreeting, 400);
       }
 
       if (event.type === 'response.audio.delta') {
@@ -160,10 +184,9 @@ function connectToOpenAI(conn, session) {
           console.log(`🤖 ${session.id}: ${text}`);
         }
 
-        // Check for farvel
+        // AI afslutter selv
         if (text.match(/\b(farvel|hej hej|tak for i dag|det var det hele|tak skal du have)\b/i)) {
-          console.log('👋 AI afslutter samtalen naturligt...');
-          setTimeout(() => endCall(conn, session, 'Farvel'), 2000);
+          sendFarewell();
         }
       }
     } catch (err) {
@@ -171,15 +194,17 @@ function connectToOpenAI(conn, session) {
     }
   });
 
-  // ===== Twilio → OpenAI =====
+  // ====== TWILIO → OPENAI ======
   conn.on('message', (msg) => {
     try {
       const data = JSON.parse(msg);
       switch (data.event) {
         case 'start':
           session.streamSid = data.start.streamSid;
+          session.twilioReady = true;
           console.log(`📡 Twilio stream startet: ${session.streamSid}`);
           resetInactivityTimer();
+          if (session.openAiReady && !session.greeted) setTimeout(sendGreeting, 400);
           break;
 
         case 'media':
@@ -207,15 +232,30 @@ function connectToOpenAI(conn, session) {
   openAiWs.on('error', (err) => console.error('❌ OpenAI WebSocket fejl:', err));
 }
 
-// ===== Cleanup =====
+// ===== CLEANUP =====
 function cleanup(session, openAiWs) {
   if (session.inactivityTimer) clearTimeout(session.inactivityTimer);
   if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
 }
 
-// ===== End Call =====
+// ===== END CALL =====
+function gracefulHangup(conn, session, reason) {
+  console.log(`📞 Afslutter opkald pga. ${reason}`);
+  const farewell = {
+    type: 'response.create',
+    response: {
+      instructions:
+        'Sig venligt: "Det ser ud til, at forbindelsen er blevet stille. Jeg afslutter samtalen nu. Ha’ en god dag!"',
+      modalities: ['audio'],
+      voice: VOICE,
+    },
+  };
+  conn.send(JSON.stringify(farewell));
+  setTimeout(() => endCall(conn, session, reason), 3500);
+}
+
 function endCall(conn, session, reason = 'Ukendt') {
-  console.log(`📞 Afslutter opkald (${reason}) for session ${session.id}`);
+  console.log(`☎️ Hangup (${reason}) for session ${session.id}`);
   try {
     const hangup = { event: 'stop' };
     conn.send(JSON.stringify(hangup));
@@ -224,7 +264,7 @@ function endCall(conn, session, reason = 'Ukendt') {
   }
 }
 
-// ====== Post-call Processing ======
+// ===== POST-CALL PROCESSING =====
 async function makeChatGPTCompletion(transcript) {
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -263,15 +303,24 @@ async function processTranscriptAndSend(transcript, id) {
   try {
     const result = await makeChatGPTCompletion(transcript);
     const content = result?.choices?.[0]?.message?.content;
-    if (!content) return;
-    const parsed = JSON.parse(content);
-    await sendToWebhook(parsed);
+
+    if (!content) {
+      console.warn('⚠️ Ingen content modtaget fra OpenAI');
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(content);
+      await sendToWebhook(parsed);
+    } catch {
+      console.warn('⚠️ Modtaget ikke-JSON svar fra OpenAI:', content);
+    }
   } catch (err) {
     console.error('❌ processTranscriptAndSend fejl:', err);
   }
 }
 
-// ===== Start Server =====
+// ===== START SERVER =====
 fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
   if (err) {
     console.error(err);
