@@ -47,7 +47,7 @@ fastify.all('/voice', async (req, reply) => {
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
   <Response>
     <Say language="da-DK"></Say>
-    <Pause length="1"/>
+    <Pause length="2"/>
     <Connect>
       <Stream
         url="wss://twilio-demo-q5pd.onrender.com/media-stream"
