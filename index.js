@@ -69,7 +69,7 @@ fastify.all('/voice', async (request, reply) => {
     response.say(
         'Hej, du har ringet til Dirty Ranch Steakhouse. Et øjeblik, mens jeg forbinder dig til vores AI-receptionist.',
         {
-            voice: 'Polly.Danish.Naja',
+            voice: 'Polly.Naja',
             language: 'da-DK'
         }
     );
