@@ -47,7 +47,9 @@ fastify.all('/voice', async (req, reply) => {
   <Response>
     <Say language="da-DK"></Say>
     <Connect>
-      <Stream url="wss://${req.headers.host}/media-stream" />
+      <Stream url="wss://${req.headers.host}/media-stream"
+              track="both_tracks"
+              audioFormat="audio/ulaw" />
     </Connect>
   </Response>`;
   reply.type('text/xml').send(twiml);
@@ -77,7 +79,26 @@ fastify.register(async (fastify) => {
       }
     );
 
-    // --- Functions ---
+    // --- Helper function for greeting ---
+    const trySendGreeting = () => {
+      if (!session.greeted && session.streamSid && session.openAiReady) {
+        session.greeted = true;
+        console.log('🎙️ Sender dansk hilsen...');
+        ai.send(
+          JSON.stringify({
+            type: 'response.create',
+            response: {
+              instructions:
+                'Hej, du taler med Ava fra Dirty Ranch Steakhouse. Hvordan kan jeg hjælpe dig i dag?',
+              modalities: ['audio'],
+              voice: VOICE,
+            },
+          })
+        );
+      }
+    };
+
+    // --- AI session update ---
     const sendSessionUpdate = () => {
       const update = {
         type: 'session.update',
@@ -97,30 +118,13 @@ fastify.register(async (fastify) => {
       console.log('🟢 OpenAI session opdateret');
     };
 
-    const sendGreeting = () => {
-      if (session.greeted) return;
-      session.greeted = true;
-      console.log('🎙️ Sender dansk hilsen...');
-      ai.send(
-        JSON.stringify({
-          type: 'response.create',
-          response: {
-            instructions:
-              'Hej, du taler med Ava fra Dirty Ranch Steakhouse. Hvordan kan jeg hjælpe dig i dag?',
-            modalities: ['audio'],
-            voice: VOICE,
-          },
-        })
-      );
-    };
-
-    // --- AI WebSocket ---
+    // --- OpenAI WebSocket ---
     ai.on('open', () => {
       console.log('✅ Forbundet til OpenAI Realtime API');
       setTimeout(() => {
         sendSessionUpdate();
         session.openAiReady = true;
-        if (session.streamSid) setTimeout(sendGreeting, 500);
+        trySendGreeting();
       }, 300);
     });
 
@@ -140,7 +144,7 @@ fastify.register(async (fastify) => {
           const audioDelta = {
             event: 'media',
             streamSid: session.streamSid,
-            media: { payload: event.delta }, // direkte base64-data
+            media: { payload: event.delta },
           };
           conn.send(JSON.stringify(audioDelta));
         }
@@ -169,7 +173,7 @@ fastify.register(async (fastify) => {
           case 'start':
             session.streamSid = data.start.streamSid;
             console.log(`📡 Twilio stream startet: ${session.streamSid}`);
-            if (session.openAiReady) setTimeout(sendGreeting, 500);
+            setTimeout(trySendGreeting, 500); // <— sikrer afspilning
             break;
           case 'media':
             if (ai.readyState === WebSocket.OPEN)
