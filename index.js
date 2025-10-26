@@ -158,10 +158,22 @@ fastify.register(async (fastify) => {
                             );
                         }
                         break;
-                    case 'start':
-                        session.streamSid = data.start.streamSid;
-                        console.log('Incoming stream started', session.streamSid);
-                        break;
+                        case 'start':
+                            session.streamSid = data.start.streamSid;
+                            console.log('Incoming stream started', session.streamSid);
+
+                            // Få OpenAI til at tale først
+                            const greeting = {
+                                type: 'response.create',
+                                response: {
+                                    instructions:
+                                        'Start samtalen på dansk med: "Hej, du taler med Ava fra Dirty Ranch Steakhouse. Hvordan kan jeg hjælpe dig i dag?"',
+                                    modalities: ['audio'],
+                                    voice: VOICE,
+                                },
+                            };
+                            openAiWs.send(JSON.stringify(greeting));
+                            break;
                     default:
                         console.log('Non-media event:', data.event);
                         break;
