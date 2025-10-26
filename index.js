@@ -77,12 +77,6 @@ fastify.all('/voice', async (request, reply) => {
     // Pause for naturlig tale
     response.pause({ length: 1 });
 
-    // Introduktion
-    response.say('Okay, du kan begynde at tale nu.', {
-        voice: 'Polly.Danish.Naja',
-        language: 'da-DK'
-    });
-
     // Tilføj stream-forbindelsen til real-time AI
     const connect = response.connect();
     connect.stream({ url: `wss://${request.headers.host}/media-stream` });
