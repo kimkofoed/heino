@@ -94,9 +94,10 @@ fastify.register(async (fastify) => {
         let session = sessions.get(sessionId) || { transcript: '', streamSid: null };
         sessions.set(sessionId, session);
 
-        const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-realtime', {
+        const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
             headers: {
                 Authorization: `Bearer ${OPENAI_API_KEY}`,
+                "OpenAI-Beta": "realtime=v1"
             }
         });
 
