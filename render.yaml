@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: twilio-openai-realtime
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /health
+    autoDeploy: true
