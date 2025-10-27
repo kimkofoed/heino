@@ -10,10 +10,9 @@ import twilio from 'twilio';
 // Twilio VoiceResponse
 const { VoiceResponse } = twilio.twiml;
 
-// Load environment variables from .env file
+// Load environment variables
 dotenv.config();
 
-// Retrieve the OpenAI API key from environment variables
 const { OPENAI_API_KEY, WEBHOOK_URL } = process.env;
 
 if (!OPENAI_API_KEY) {
@@ -26,9 +25,29 @@ const fastify = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Constants
-const SYSTEM_MESSAGE =
-    'Du er en AI-receptionist for Dirty Ranch Steakhouse, en hyggelig og stemningsfuld steakrestaurant. Din rolle er at tage imod gæster på en venlig, høflig og naturlig måde, og hjælpe dem med reservationer eller forespørgsler. Du taler, skriver og forstår dansk grammatik, stavning og udtale korrekt. Du forstår danske vokaler og navne præcist — fx at "Kim" er et dansk fornavn og ikke et ord, der skal oversættes eller ændres. Du skal respektere store og små bogstaver, samt brugen af æ, ø og å i danske navne og ord. Du må aldrig gætte eller ændre et navn – skriv det præcis, som gæsten oplyser det. Din samtalestil skal være venlig, rolig og professionel – som en imødekommende receptionist. Brug naturlig dansk sætningsopbygning og en varm tone. Stil kun ét spørgsmål ad gangen. Brug korte, personlige svar – undgå at lyde som en formular. Små venlige bemærkninger er velkomne, f.eks. “Hvor dejligt!”, “Selvfølgelig, jeg hjælper dig med det.” eller “Tak, det noterer jeg.” Din opgave er at føre en samtale for at indsamle følgende oplysninger: 1) Gæstens navn. 2) Dato og tidspunkt for besøget. 3) Antal personer. 4) Eventuelle særlige ønsker (f.eks. allergier, fødselsdag, bordønsker). Du må ikke bede om telefonnummer, e-mail eller anden kontaktinformation. Du skal ikke tjekke ledighed – antag, at der altid er plads.';
+// 🧠 Opdateret og høflig dansk prompt
+const SYSTEM_MESSAGE = `
+Du er en AI-receptionist for Dirty Ranch Steakhouse, en hyggelig og stemningsfuld steakrestaurant.
+Din rolle er at tage imod gæster på en venlig, høflig og naturlig måde, og hjælpe dem med reservationer eller forespørgsler.
+
+🗣️ Samtale-stil:
+- Tal som et menneske, roligt, varmt og professionelt.
+- Brug korte, naturlige sætninger, som en venlig receptionist.
+- Vent altid, til gæsten er færdig med at tale, før du svarer.
+- Stop straks med at tale, hvis du hører, at gæsten begynder at tale.
+- Brug små pauser (0,3–0,5 sek.) inden du svarer, så samtalen føles flydende.
+- Brug naturlig dansk grammatik, udtale og navne (fx “Kim” skal ikke oversættes).
+
+🎯 Din opgave:
+Indsaml følgende oplysninger:
+1) Gæstens navn
+2) Dato og tidspunkt for besøget
+3) Antal personer
+4) Eventuelle særlige ønsker (f.eks. allergier, fødselsdag, bordønsker)
+
+Må ikke bede om telefonnummer, e-mail eller anden kontaktinfo.
+Antag altid, at der er ledige borde.
+`;
 
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050;
@@ -36,7 +55,6 @@ const PORT = process.env.PORT || 5050;
 // Session management
 const sessions = new Map();
 
-// Event types for debugging
 const LOG_EVENT_TYPES = [
     'response.content.done',
     'rate_limits.updated',
@@ -50,42 +68,34 @@ const LOG_EVENT_TYPES = [
 ];
 
 // Root route
-fastify.get('/', async (request, reply) => {
+fastify.get('/', async (_, reply) => {
     reply.send({ message: 'Twilio Media Stream Server is running!' });
 });
 
-// ✅ NEW: Health-check route for Render
-fastify.get('/health', async (request, reply) => {
+// Health check
+fastify.get('/health', async (_, reply) => {
     reply.code(200).send({ status: 'ok' });
 });
 
-// ✅ UPDATED: Twilio incoming call handler
+// Twilio incoming call handler
 fastify.all('/voice', async (request, reply) => {
     console.log('Incoming call');
 
     const response = new VoiceResponse();
+    response.say('Hej, du har ringet til Dirty Ranch Steakhouse. Hvad kan jeg hjælpe dig med?', {
+        voice: 'Polly.Naja',
+        language: 'da-DK'
+    });
 
-    // Dansk velkomstbesked
-    response.say(
-        'Hej, du har ringet til . Hvad kan jeg hjælpe dig med',
-        {
-            voice: 'Polly.Naja',
-            language: 'da-DK'
-        }
-    );
-
-    // Pause for naturlig tale
     response.pause({ length: 1 });
 
-    // Tilføj stream-forbindelsen til real-time AI
     const connect = response.connect();
     connect.stream({ url: `wss://${request.headers.host}/media-stream` });
 
-    // Send TwiML som XML til Twilio
     reply.type('text/xml').send(response.toString());
 });
 
-// WebSocket route for media-stream
+// WebSocket route
 fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log('Client connected');
@@ -101,11 +111,12 @@ fastify.register(async (fastify) => {
             }
         });
 
+        // ✨ Opdateret session-setup med client-managed turns
         const sendSessionUpdate = () => {
             const sessionUpdate = {
                 type: 'session.update',
                 session: {
-                    turn_detection: { type: 'server_vad' },
+                    turn_detection: { type: 'none' }, // client-managed barge-in
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
@@ -120,7 +131,7 @@ fastify.register(async (fastify) => {
         };
 
         openAiWs.on('open', () => {
-            console.log('Connected to the OpenAI Realtime API');
+            console.log('Connected to OpenAI Realtime API');
             setTimeout(sendSessionUpdate, 250);
         });
 
@@ -130,18 +141,6 @@ fastify.register(async (fastify) => {
 
                 if (LOG_EVENT_TYPES.includes(response.type)) {
                     console.log(`Received event: ${response.type}`, response);
-                }
-
-                // 🧠 Track når brugeren begynder at tale
-                if (response.type === 'input_audio_buffer.speech_started') {
-                    session.speechStartTime = Date.now();
-                    console.log(`🎤 User started speaking at ${session.speechStartTime}`);
-                }
-
-                // 🧠 Når brugeren stopper med at tale → bed OpenAI om at svare
-                if (response.type === 'input_audio_buffer.speech_stopped') {
-                    console.log("🗣️ Speech stopped – requesting AI response");
-                    openAiWs.send(JSON.stringify({ type: "response.create" }));
                 }
 
                 if (response.type === 'conversation.item.input_audio_transcription.completed') {
@@ -156,14 +155,7 @@ fastify.register(async (fastify) => {
                     console.log(`Agent (${sessionId}): ${agentMessage}`);
                 }
 
-                // 🧩 Latency: fra speech_stopped → første lyd tilbage
                 if (response.type === 'response.audio.delta' && response.delta) {
-                    if (!session.firstAudioTimestamp && session.speechStartTime) {
-                        session.firstAudioTimestamp = Date.now();
-                        const latency = session.firstAudioTimestamp - session.speechStartTime;
-                        console.log(`⚡ Latency: ${latency} ms`);
-                    }
-
                     const audioDelta = {
                         event: 'media',
                         streamSid: session.streamSid,
@@ -176,26 +168,47 @@ fastify.register(async (fastify) => {
                     console.log('Session updated successfully:', response);
                 }
             } catch (error) {
-                console.error('Error processing OpenAI message:', error, 'Raw message:', data);
+                console.error('Error processing OpenAI message:', error, 'Raw:', data);
             }
         });
 
+        // 🎯 PROFESSIONEL BARGE-IN IMPLEMENTATION
         connection.on('message', (message) => {
             try {
                 const data = JSON.parse(message);
+
                 switch (data.event) {
                     case 'media':
                         if (openAiWs.readyState === WebSocket.OPEN) {
+                            // Stop AI straks når brugeren begynder at tale
+                            if (!session.isUserSpeaking) {
+                                session.isUserSpeaking = true;
+                                openAiWs.send(JSON.stringify({ type: 'response.cancel' }));
+                                console.log('🛑 Barge-in: cancelled AI speech immediately');
+                            }
+
+                            // Send lyd til AI buffer
                             openAiWs.send(JSON.stringify({
                                 type: 'input_audio_buffer.append',
                                 audio: data.media.payload
                             }));
+
+                            // Hvis der er 500ms stilhed → AI må svare
+                            clearTimeout(session.silenceTimer);
+                            session.silenceTimer = setTimeout(() => {
+                                session.isUserSpeaking = false;
+                                console.log('🤖 User finished speaking → creating AI response');
+                                openAiWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+                                openAiWs.send(JSON.stringify({ type: 'response.create' }));
+                            }, 500);
                         }
                         break;
+
                     case 'start':
                         session.streamSid = data.start.streamSid;
-                        console.log('Incoming stream has started', session.streamSid);
+                        console.log('Incoming stream started', session.streamSid);
                         break;
+
                     default:
                         console.log('Received non-media event:', data.event);
                         break;
@@ -215,8 +228,8 @@ fastify.register(async (fastify) => {
             sessions.delete(sessionId);
         });
 
-        openAiWs.on('close', () => console.log('Disconnected from the OpenAI Realtime API'));
-        openAiWs.on('error', (error) => console.error('Error in the OpenAI WebSocket:', error));
+        openAiWs.on('close', () => console.log('Disconnected from OpenAI Realtime API'));
+        openAiWs.on('error', (error) => console.error('Error in OpenAI WebSocket:', error));
     });
 });
 
@@ -228,7 +241,8 @@ fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
     console.log(`Server is listening on port ${PORT}`);
 });
 
-// Function to make ChatGPT API completion call
+// ---- Utility functions ----
+
 async function makeChatGPTCompletion(transcript) {
     console.log('Starting ChatGPT API call...');
     try {
@@ -271,7 +285,6 @@ async function makeChatGPTCompletion(transcript) {
     }
 }
 
-// Function to send data to webhook
 async function sendToWebhook(payload) {
     console.log('Sending data to webhook:', JSON.stringify(payload, null, 2));
     try {
@@ -288,7 +301,6 @@ async function sendToWebhook(payload) {
     }
 }
 
-// Function to process and send extracted details
 async function processTranscriptAndSend(transcript, sessionId = null) {
     console.log(`Starting transcript processing for session ${sessionId}...`);
     try {
