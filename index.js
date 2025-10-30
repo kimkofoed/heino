@@ -116,6 +116,8 @@ fastify.register(async (fastify) => {
         type: 'session.update',
         session: {
           assistant_id: ASSISTANT_ID, // 👈 key integration
+          input_audio_format: 'g711_ulaw',   // 👈 Twilio inbound
+          output_audio_format: 'g711_ulaw',  // 👈 Twilio outbound
           voice: VOICE,
           input_audio_transcription: { model: 'whisper-1' }
         }
