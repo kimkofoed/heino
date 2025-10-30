@@ -1,119 +1,163 @@
 import Fastify from "fastify";
 import dotenv from "dotenv";
-import fetch from "node-fetch";
 import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
-import twilio from "twilio";
 import { z } from "zod";
 import { RealtimeAgent, RealtimeSession, tool } from "@openai/agents/realtime";
 import { TwilioRealtimeTransportLayer } from "@openai/agents-extensions";
 
 dotenv.config();
-const { VoiceResponse } = twilio.twiml;
 
-const { OPENAI_API_KEY, ASSISTANT_ID } = process.env;
-if (!OPENAI_API_KEY) throw new Error("❌ Missing OPENAI_API_KEY");
-if (!ASSISTANT_ID) throw new Error("❌ Missing ASSISTANT_ID");
-
-const fastify = Fastify({ logger: true });
-fastify.register(fastifyFormBody);
-fastify.register(fastifyWs);
-
+const { OPENAI_API_KEY, WORKFLOW_ID } = process.env;
 const PORT = process.env.PORT || 5050;
-const VOICE = "alloy";
 
-// 🧩 Tool: call workflow
+if (!OPENAI_API_KEY) throw new Error("❌ Missing OPENAI_API_KEY");
+if (!WORKFLOW_ID) throw new Error("❌ Missing WORKFLOW_ID (wf_...)");
+
+// 🚨 Log startup
+console.log("🚀 Starting Twilio ↔ OpenAI Realtime bridge");
+console.log("🔑 Using workflow:", WORKFLOW_ID);
+console.log("🌐 Port:", PORT);
+
+// 🧩 Tool: Bridge to your Workflow
 const callRestaurantWorkflow = tool({
   name: "call_restaurant_workflow",
-  description: "Sender tekst til restaurantens workflow og returnerer svaret.",
+  description: "Calls the restaurant workflow and returns its reply text.",
   parameters: z.object({
-    user_text: z.string().describe("Det, brugeren sagde på dansk"),
+    user_text: z.string().describe("The user's spoken input"),
   }),
   async execute({ user_text }) {
-    console.log(`📡 Sender tekst til workflow: ${user_text}`);
-    const res = await fetch(`https://api.openai.com/v1/workflows/${ASSISTANT_ID}/runs`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ input: { user_text } }),
-    });
-    const json = await res.json();
-    return (
-      json.output?.text ||
-      json.output_text ||
-      json.output?.message ||
-      "Beklager, der opstod en fejl i workflowet."
-    );
+    console.log("🧩 TOOL: call_restaurant_workflow called with:", user_text);
+
+    try {
+      const response = await fetch(
+        `https://api.openai.com/v1/workflows/${WORKFLOW_ID}/runs`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ input: { user_text } }),
+        }
+      );
+
+      console.log("🌐 Workflow request sent...");
+      const json = await response.json();
+      console.log("✅ Workflow raw response:", JSON.stringify(json, null, 2));
+
+      const reply =
+        json.output?.text ||
+        json.output_text ||
+        json.output?.message ||
+        json.output?.content ||
+        "Beklager, der opstod en fejl i workflowet.";
+
+      console.log("🤖 Workflow reply extracted:", reply);
+      return reply;
+    } catch (err) {
+      console.error("❌ Workflow request failed:", err);
+      return "Der opstod en fejl ved kontakt til workflowet.";
+    }
   },
 });
 
-// 🧱 Guardrails: blokér bestemte ord i output
-const guardrails = [
-  {
-    name: "Blocklist terms",
-    async execute({ agentOutput }) {
-      const blocked = ["rabatter", "refusion", "bandeord", "persondata"];
-      const found = blocked.some((term) => agentOutput.toLowerCase().includes(term));
-      if (found) console.log("🚫 Guardrail triggered — blocked term in output");
-      return {
-        tripwireTriggered: found,
-        outputInfo: { blockedTerms: found },
-      };
-    },
-  },
-];
-
-// 🧠 Agent config
+// 🎙️ Agent definition
 const agent = new RealtimeAgent({
-  name: "Dirty Ranch Telefonassistent",
-  voice: VOICE,
+  name: "Dirty Ranch Voice Agent",
   instructions: `
     Du er en dansk telefonassistent for Dirty Ranch Steakhouse.
     Hver gang brugeren siger noget, skal du kalde call_restaurant_workflow
-    med hele den transskriberede tekst som user_text.
-    Brug svaret fra workflowet som dit svar, og svar altid naturligt på dansk.
+    med hele transskriptionen som user_text.
+    Brug svaret fra workflowet som dit svar til brugeren.
+    Tal altid naturligt og venligt på dansk.
   `,
   tools: [callRestaurantWorkflow],
 });
 
-// ✅ Twilio webhook
-fastify.all("/voice", async (req, reply) => {
-  const response = new VoiceResponse();
-  response.say("Hej, du har ringet til Dirty Ranch Steakhouse. Hvad kan jeg hjælpe dig med?", {
-    voice: "Polly.Naja",
-    language: "da-DK",
-  });
-  response.pause({ length: 1 });
-  const connect = response.connect();
-  connect.stream({ url: `wss://${req.headers.host}/media-stream` });
-  reply.type("text/xml").send(response.toString());
+// 🛑 Guardrails
+const guardrails = [
+  {
+    name: "Blocklist",
+    async execute({ agentOutput }) {
+      const banned = ["discount", "refund", "racist"];
+      const found = banned.find((term) => agentOutput.includes(term));
+      if (found) console.warn(`🚨 Blocked term detected: ${found}`);
+      return { tripwireTriggered: !!found };
+    },
+  },
+];
+
+// ⚡ Server setup
+const fastify = Fastify({ logger: true });
+fastify.register(fastifyFormBody);
+fastify.register(fastifyWs);
+
+fastify.get("/", async (_, reply) =>
+  reply.send({ message: "✅ Twilio + OpenAI Realtime SDK running" })
+);
+fastify.get("/health", async (_, reply) =>
+  reply.code(200).send({ status: "ok" })
+);
+
+// 📞 Incoming Twilio call
+fastify.all("/voice", async (request, reply) => {
+  console.log("📞 Incoming call from Twilio");
+  const twiml = `
+<Response>
+  <Say voice="Polly.Naja" language="da-DK">
+    Hej, du har ringet til Dirty Ranch Steakhouse. Hvordan kan jeg hjælpe dig i dag?
+  </Say>
+  <Connect>
+    <Stream url="wss://${request.headers.host}/media-stream" />
+  </Connect>
+</Response>`.trim();
+  reply.type("text/xml").send(twiml);
 });
 
-// ✅ Media stream → SDK session
+// 🔄 Twilio Media Stream <-> OpenAI SDK
 fastify.register(async (fastify) => {
   fastify.get("/media-stream", { websocket: true }, async (connection) => {
+    console.log("🎧 New media stream connection from Twilio");
+
     try {
-      const transport = new TwilioRealtimeTransportLayer({ twilioWebSocket: connection });
+      const transport = new TwilioRealtimeTransportLayer({
+        twilioWebSocket: connection,
+      });
+
+      console.log("🔄 Created Twilio transport layer");
+
       const session = new RealtimeSession(agent, {
         transport,
-        outputGuardrails: guardrails, // 🧱 her tilføjes guardrails
+        outputGuardrails: guardrails,
       });
+
+      session.on("stateChanged", (state) =>
+        console.log("📡 Session state changed:", state)
+      );
+
+      session.on("message", (msg) =>
+        console.log("📥 Raw message from Realtime API:", JSON.stringify(msg))
+      );
+
       await session.connect({ apiKey: OPENAI_API_KEY });
-      console.log("✅ Forbundet til OpenAI Realtime API (med guardrails)");
+      console.log("✅ Connected to OpenAI Realtime API (via SDK)");
+
+      connection.on("close", () => {
+        console.log("🔚 Twilio WebSocket closed");
+      });
     } catch (err) {
-      console.error("💥 Realtime-forbindelsesfejl:", err);
+      console.error("💥 Error initializing session:", err);
       connection.close();
     }
   });
 });
 
-// ✅ Health routes
-fastify.get("/", async (_, r) => r.send({ ok: true }));
-fastify.get("/health", async (_, r) => r.code(200).send({ status: "ok" }));
-
+// 🚀 Start the server
 fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
-  if (err) throw err;
-  console.log(`🚀 Server kører på port ${PORT}`);
+  if (err) {
+    console.error("❌ Failed to start server:", err);
+    process.exit(1);
+  }
+  console.log(`🚀 Server live on port ${PORT}`);
 });
