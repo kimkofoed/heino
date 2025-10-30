@@ -87,6 +87,7 @@ fastify.all('/voice', async (request, reply) => {
 // ----------------------
 // 🔊 WebSocket handling
 // ----------------------
+// WebSocket route
 fastify.register(async (fastify) => {
   fastify.get('/media-stream', { websocket: true }, (connection, req) => {
     console.log('🔗 Client connected');
@@ -100,24 +101,30 @@ fastify.register(async (fastify) => {
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'OpenAI-Beta': 'realtime=v1'
+          "OpenAI-Beta": "realtime=v1"
         }
       }
     );
 
-    // ✨ Use Agent Builder assistant instead of static SYSTEM_MESSAGE
+    // ✅ OpenAI Realtime Session Setup (no barge-in)
     const sendSessionUpdate = () => {
       const sessionUpdate = {
         type: 'session.update',
         session: {
-          turn_detection: { type: 'none' },
+          // 👇 OpenAI håndterer pauser, tale-stop og svar
+          turn_detection: {
+            type: 'server_vad',
+            threshold: 0.5,
+            silence_duration_ms: 700, // naturlig pause på 0,7 sek
+            create_response: true
+          },
           input_audio_format: 'g711_ulaw',
           output_audio_format: 'g711_ulaw',
           voice: VOICE,
           assistant_id: builderConfig.assistant_id,
-          modalities: ['text', 'audio'],
+          modalities: ["text", "audio"],
           temperature: 0.8,
-          input_audio_transcription: { model: 'whisper-1' }
+          input_audio_transcription: { model: "whisper-1" }
         }
       };
       console.log('🧠 Sending session update with Assistant:', JSON.stringify(sessionUpdate));
@@ -126,7 +133,7 @@ fastify.register(async (fastify) => {
 
     openAiWs.on('open', () => {
       console.log('✅ Connected to OpenAI Realtime API');
-      setTimeout(sendSessionUpdate, 250);
+      setTimeout(sendSessionUpdate, 300);
     });
 
     openAiWs.on('message', (data) => {
@@ -151,11 +158,12 @@ fastify.register(async (fastify) => {
           console.log(`🤖 Agent (${sessionId}): ${agentMessage}`);
         }
 
+        // 🎧 Send lyd tilbage til Twilio
         if (response.type === 'response.audio.delta' && response.delta) {
           const audioDelta = {
             event: 'media',
             streamSid: session.streamSid,
-            media: { payload: Buffer.from(response.delta, 'base64').toString('base64') }
+            media: { payload: response.delta } // ⚠️ allerede base64-encoded
           };
           connection.send(JSON.stringify(audioDelta));
         }
@@ -168,37 +176,24 @@ fastify.register(async (fastify) => {
       }
     });
 
-    // 🎯 Barge-in implementation
+    // 🎙️ Twilio sender lyd → OpenAI input buffer
     connection.on('message', (message) => {
       try {
         const data = JSON.parse(message);
+
         switch (data.event) {
           case 'media':
             if (openAiWs.readyState === WebSocket.OPEN) {
-              if (!session.isUserSpeaking) {
-                session.isUserSpeaking = true;
-                openAiWs.send(JSON.stringify({ type: 'response.cancel' }));
-                console.log('🛑 Barge-in: cancelled AI speech');
-              }
-
               openAiWs.send(JSON.stringify({
                 type: 'input_audio_buffer.append',
                 audio: data.media.payload
               }));
-
-              clearTimeout(session.silenceTimer);
-              session.silenceTimer = setTimeout(() => {
-                session.isUserSpeaking = false;
-                console.log('🤖 User stopped talking → AI responds');
-                openAiWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-                openAiWs.send(JSON.stringify({ type: 'response.create' }));
-              }, 500);
             }
             break;
 
           case 'start':
             session.streamSid = data.start.streamSid;
-            console.log('🎧 Incoming stream started', session.streamSid);
+            console.log('🎧 Stream started:', session.streamSid);
             break;
 
           default:
@@ -206,7 +201,7 @@ fastify.register(async (fastify) => {
             break;
         }
       } catch (error) {
-        console.error('❌ Error parsing message:', error, 'Message:', message);
+        console.error('❌ Error parsing Twilio message:', error);
       }
     });
 
@@ -220,9 +215,10 @@ fastify.register(async (fastify) => {
     });
 
     openAiWs.on('close', () => console.log('❎ Disconnected from OpenAI Realtime API'));
-    openAiWs.on('error', (error) => console.error('❌ Error in OpenAI WebSocket:', error));
+    openAiWs.on('error', (error) => console.error('💥 Error in OpenAI WebSocket:', error));
   });
 });
+
 
 // ----------------------
 // 🚀 START SERVER
