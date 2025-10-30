@@ -22,7 +22,7 @@ if (!OPENAI_API_KEY) {
 
 // ✅ Agent Builder Assistant ID (kan komme fra .env eller fallback)
 const builderConfig = {
-    assistant_id: ASSISTANT_ID || "wf_6901c643ba408190be2d21093bd57c6205bec43d26407d02"
+    assistant_id: ASSISTANT_ID
 };
 
 const VOICE = 'alloy';
