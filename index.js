@@ -31,7 +31,7 @@ const callRestaurantWorkflow = tool({
 
     try {
       const response = await fetch(
-        `https://api.openai.com/v1/agents/${WORKFLOW_ID}/runs`,
+        `https://api.openai.com/v1/assistants/${WORKFLOW_ID}/runs`,
         {
           method: "POST",
           headers: {
