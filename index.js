@@ -151,40 +151,51 @@ fastify.register(async (fastify) => {
         }
 
         // 🧩 Tool Call bridge to workflow
-        if (response.type === 'response.function_call' && response.name === 'call_restaurant_workflow') {
-          const userText = response.arguments?.user_text || '';
-          console.log(`📡 Sending to workflow: ${userText}`);
+        if (response.type === 'response.function_call') {
+            const fnCall = response.response?.output?.[0];
+            if (fnCall?.name === 'call_restaurant_workflow') {
+                const userText = fnCall.arguments?.user_text || '';
+                console.log(`📡 Tool call received → sending to workflow: ${userText}`);
 
-          try {
-            const wfResponse = await fetch(`https://api.openai.com/v1/workflows/${ASSISTANT_ID}/runs`, {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${OPENAI_API_KEY}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ input: { user_text: userText } })
-            });
+                try {
+                const wfResponse = await fetch(`https://api.openai.com/v1/workflows/${ASSISTANT_ID}/runs`, {
+                    method: 'POST',
+                    headers: {
+                    Authorization: `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ input: { user_text: userText } })
+                });
 
-            const result = await wfResponse.json();
-            const replyText =
-              result.output?.text ||
-              result.output_text ||
-              'Beklager, der opstod en fejl i workflowet.';
+                const wfJson = await wfResponse.json();
+                console.log('🏗️ Workflow response:', wfJson);
 
-            console.log(`🤖 Workflow replied: ${replyText}`);
+                // ✅ Extract workflow output text (handle both standard + custom fields)
+                const replyText =
+                    wfJson.output?.text ||
+                    wfJson.output_text ||
+                    wfJson.output?.message ||
+                    wfJson.output?.content ||
+                    'Beklager, der opstod en fejl i workflowet.';
 
-            openAiWs.send(
-              JSON.stringify({
-                type: 'response.create',
-                response: {
-                  modalities: ['audio', 'text'],
-                  instructions: replyText
+                console.log(`🤖 Workflow replied: ${replyText}`);
+
+                // ✅ Send text back to Realtime for audio synthesis
+                openAiWs.send(
+                    JSON.stringify({
+                    type: 'response.create',
+                    response: {
+                        modalities: ['audio', 'text'],
+                        instructions: replyText
+                    }
+                    })
+                );
+
+                console.log('🗣️ Sent workflow output back to Realtime for voice playback');
+                } catch (err) {
+                console.error('❌ Workflow bridge error:', err);
                 }
-              })
-            );
-          } catch (err) {
-            console.error('❌ Workflow bridge error:', err);
-          }
+            }
         }
 
         // 🗣️ Audio back to Twilio
