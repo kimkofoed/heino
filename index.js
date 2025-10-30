@@ -107,28 +107,23 @@ fastify.register(async (fastify) => {
     );
 
     // ✅ OpenAI Realtime Session Setup (no barge-in)
-    const sendSessionUpdate = () => {
-      const sessionUpdate = {
-        type: 'session.update',
-        session: {
-          // 👇 OpenAI håndterer pauser, tale-stop og svar
-          turn_detection: {
-            type: 'server_vad',
-            threshold: 0.5,
-            silence_duration_ms: 700, // naturlig pause på 0,7 sek
-            create_response: true
-          },
-          input_audio_format: 'g711_ulaw',
-          output_audio_format: 'g711_ulaw',
-          voice: VOICE,
-          assistant_id: builderConfig.assistant_id,
-          modalities: ["text", "audio"],
-          temperature: 0.8,
-          input_audio_transcription: { model: "whisper-1" }
-        }
-      };
-      console.log('🧠 Sending session update with Assistant:', JSON.stringify(sessionUpdate));
-      openAiWs.send(JSON.stringify(sessionUpdate));
+    const sessionUpdate = {
+    type: 'session.update',
+    session: {
+        turn_detection: {
+        type: 'server_vad',
+        threshold: 0.5,
+        silence_duration_ms: 700,
+        create_response: true
+        },
+        input_audio_format: 'pcm16',       // 👈 ÆNDRET (tidligere g711_ulaw)
+        output_audio_format: 'g711_ulaw',  // 👈 beholdes for Twilio
+        voice: VOICE,
+        assistant_id: builderConfig.assistant_id,
+        modalities: ["text", "audio"],
+        temperature: 0.8,
+        input_audio_transcription: { model: "whisper-1" }
+    }
     };
 
     openAiWs.on('open', () => {
