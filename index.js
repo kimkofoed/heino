@@ -1,11 +1,10 @@
 import Fastify from 'fastify';
 import WebSocket from 'ws';
-import fs from 'fs';
 import dotenv from 'dotenv';
-import fastifyFormBody from '@fastify/formbody';
-import fastifyWs from '@fastify/websocket';
 import fetch from 'node-fetch';
 import twilio from 'twilio';
+import fastifyFormBody from '@fastify/formbody';
+import fastifyWs from '@fastify/websocket';
 
 // Twilio VoiceResponse
 const { VoiceResponse } = twilio.twiml;
@@ -13,6 +12,7 @@ const { VoiceResponse } = twilio.twiml;
 // Load environment variables
 dotenv.config();
 
+// Env variables
 const { OPENAI_API_KEY, WEBHOOK_URL, ASSISTANT_ID } = process.env;
 
 if (!OPENAI_API_KEY) {
@@ -20,21 +20,15 @@ if (!OPENAI_API_KEY) {
   process.exit(1);
 }
 
-// ✅ Initialize Fastify instance before any routes
-const fastify = Fastify({
-  logger: true // optional but great for debugging on Render
-});
+if (!ASSISTANT_ID) {
+  console.error('❌ Missing ASSISTANT_ID. Please set it in the .env file.');
+  process.exit(1);
+}
 
-// Register plugins
-await fastify.register(fastifyFormBody);
-await fastify.register(fastifyWs);
-
-// ----------------------
-// ⚙️ BASIC CONFIG
-// ----------------------
-const builderConfig = {
-  assistant_id: ASSISTANT_ID
-};
+// Initialize Fastify
+const fastify = Fastify({ logger: true });
+fastify.register(fastifyFormBody);
+fastify.register(fastifyWs);
 
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050;
@@ -42,6 +36,7 @@ const PORT = process.env.PORT || 5050;
 // Session management
 const sessions = new Map();
 
+// Loggable event types
 const LOG_EVENT_TYPES = [
   'response.content.done',
   'rate_limits.updated',
@@ -54,20 +49,17 @@ const LOG_EVENT_TYPES = [
   'conversation.item.input_audio_transcription.completed'
 ];
 
-// ----------------------
-// 🌐 ROUTES
-// ----------------------
+// ✅ Root route
 fastify.get('/', async (_, reply) => {
   reply.send({ message: '✅ Twilio Media Stream Server is running!' });
 });
 
+// ✅ Health-check route
 fastify.get('/health', async (_, reply) => {
   reply.code(200).send({ status: 'ok' });
 });
 
-// ----------------------
-// 📞 Twilio incoming call
-// ----------------------
+// ✅ Twilio incoming call handler
 fastify.all('/voice', async (request, reply) => {
   console.log('📞 Incoming call');
 
@@ -78,110 +70,117 @@ fastify.all('/voice', async (request, reply) => {
   });
 
   response.pause({ length: 1 });
+
   const connect = response.connect();
   connect.stream({ url: `wss://${request.headers.host}/media-stream` });
 
   reply.type('text/xml').send(response.toString());
 });
 
-// ----------------------
-// 🔊 WebSocket handling
-// ----------------------
-// WebSocket route
+// ✅ WebSocket: Twilio <-> OpenAI
 fastify.register(async (fastify) => {
   fastify.get('/media-stream', { websocket: true }, (connection, req) => {
-    console.log('🔗 Client connected');
-
     const sessionId = req.headers['x-twilio-call-sid'] || `session_${Date.now()}`;
-    let session = sessions.get(sessionId) || { transcript: '', streamSid: null };
+    console.log(`🎧 New call session: ${sessionId}`);
+
+    let session = { transcript: '', streamSid: null, createdAt: Date.now() };
     sessions.set(sessionId, session);
 
+    // OpenAI Realtime WS
     const openAiWs = new WebSocket(
       'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "OpenAI-Beta": "realtime=v1"
+          'OpenAI-Beta': 'realtime=v1'
         }
       }
     );
 
-    // ✅ OpenAI Realtime Session Setup (no barge-in)
-    const sessionUpdate = {
-    type: 'session.update',
-    session: {
-        turn_detection: {
-        type: 'server_vad',
-        threshold: 0.5,
-        silence_duration_ms: 700,
-        create_response: true
-        },
-        input_audio_format: 'pcm16',       // 👈 ÆNDRET (tidligere g711_ulaw)
-        output_audio_format: 'g711_ulaw',  // 👈 beholdes for Twilio
-        voice: VOICE,
-        assistant_id: builderConfig.assistant_id,
-        modalities: ["text", "audio"],
-        temperature: 0.8,
-        input_audio_transcription: { model: "whisper-1" }
+    // 🟢 Keepalive
+    let pingTimeout;
+    function heartbeat() {
+      clearTimeout(pingTimeout);
+      pingTimeout = setTimeout(() => {
+        console.warn('⚠️ OpenAI WS timeout, closing...');
+        openAiWs.terminate();
+      }, 10000);
     }
-    };
 
     openAiWs.on('open', () => {
-    console.log('✅ Connected to OpenAI Realtime API');
-    // ⛔ Fjernet setTimeout — vi venter på session.created i stedet
+      console.log('✅ Connected to OpenAI Realtime API');
+      heartbeat();
+
+      // Send session.update → use assistant_id instead of SYSTEM_MESSAGE
+      const sessionUpdate = {
+        type: 'session.update',
+        session: {
+          assistant_id: ASSISTANT_ID, // 👈 key integration
+          voice: VOICE,
+          input_audio_transcription: { model: 'whisper-1' }
+        }
+      };
+      openAiWs.send(JSON.stringify(sessionUpdate));
+      console.log('🧠 Sent session update with assistant_id');
     });
 
+    openAiWs.on('ping', heartbeat);
+    openAiWs.on('pong', heartbeat);
+
+    // 🔄 Handle OpenAI events
     openAiWs.on('message', (data) => {
-    try {
+      try {
         const response = JSON.parse(data);
 
-        // 🟢 Når session er klar → send opdatering
-        if (response.type === 'session.created') {
-        console.log('✅ Session created — sending update with g711_ulaw');
-        sendSessionUpdate();
+        if (LOG_EVENT_TYPES.includes(response.type)) {
+          console.log(`📨 Event: ${response.type}`, response);
         }
 
-        if (LOG_EVENT_TYPES.includes(response.type)) {
-        console.log(`📨 Received event: ${response.type}`, response);
+        if (response.type === 'input_audio_buffer.speech_started') {
+          session.speechStartTime = Date.now();
+          console.log(`🎤 User started speaking`);
+        }
+
+        if (response.type === 'input_audio_buffer.speech_stopped') {
+          console.log('🗣️ Speech stopped – requesting AI response');
+          openAiWs.send(JSON.stringify({ type: 'response.create' }));
         }
 
         if (response.type === 'conversation.item.input_audio_transcription.completed') {
-        const userMessage = response.transcript.trim();
-        session.transcript += `User: ${userMessage}\n`;
-        console.log(`👤 User (${sessionId}): ${userMessage}`);
+          const userMessage = response.transcript.trim();
+          session.transcript += `User: ${userMessage}\n`;
+          console.log(`👤 User (${sessionId}): ${userMessage}`);
         }
 
         if (response.type === 'response.done') {
-        const agentMessage =
+          const agentMessage =
             response.response.output[0]?.content?.find(c => c.transcript)?.transcript ||
             'Agent message not found';
-        session.transcript += `Agent: ${agentMessage}\n`;
-        console.log(`🤖 Agent (${sessionId}): ${agentMessage}`);
+          session.transcript += `Agent: ${agentMessage}\n`;
+          console.log(`🤖 Agent (${sessionId}): ${agentMessage}`);
         }
 
-        // 🎧 Send lyd tilbage til Twilio
         if (response.type === 'response.audio.delta' && response.delta) {
-        const audioDelta = {
+          const audioDelta = {
             event: 'media',
             streamSid: session.streamSid,
-            media: { payload: response.delta } // allerede base64-encoded
-        };
-        connection.send(JSON.stringify(audioDelta));
+            media: { payload: response.delta }
+          };
+          connection.send(JSON.stringify(audioDelta));
         }
 
         if (response.type === 'session.updated') {
-        console.log('✅ Session updated successfully:', response);
+          console.log('✅ Session updated successfully:', response);
         }
-    } catch (error) {
-        console.error('❌ Error processing OpenAI message:', error, 'Raw:', data);
-    }
+      } catch (error) {
+        console.error('❌ Error processing OpenAI message:', error, 'Raw message:', data);
+      }
     });
 
-    // 🎙️ Twilio sender lyd → OpenAI input buffer
+    // 🎙️ Twilio → OpenAI audio
     connection.on('message', (message) => {
       try {
         const data = JSON.parse(message);
-
         switch (data.event) {
           case 'media':
             if (openAiWs.readyState === WebSocket.OPEN) {
@@ -191,15 +190,12 @@ fastify.register(async (fastify) => {
               }));
             }
             break;
-
           case 'start':
             session.streamSid = data.start.streamSid;
-            console.log('🎧 Stream started:', session.streamSid);
+            console.log(`🎙️ Stream started: ${session.streamSid}`);
             break;
-
           default:
             console.log('ℹ️ Non-media event:', data.event);
-            break;
         }
       } catch (error) {
         console.error('❌ Error parsing Twilio message:', error);
@@ -207,36 +203,34 @@ fastify.register(async (fastify) => {
     });
 
     connection.on('close', async () => {
-      if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
-      console.log(`🔌 Client disconnected (${sessionId}).`);
+      if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close(1000, 'normal close');
+      clearTimeout(pingTimeout);
+      console.log(`🔚 Client disconnected (${sessionId})`);
       console.log('📝 Full Transcript:\n', session.transcript);
 
       await processTranscriptAndSend(session.transcript, sessionId);
       sessions.delete(sessionId);
     });
 
-    openAiWs.on('close', () => console.log('❎ Disconnected from OpenAI Realtime API'));
-    openAiWs.on('error', (error) => console.error('💥 Error in OpenAI WebSocket:', error));
+    openAiWs.on('close', () => console.log('🧹 OpenAI WS closed cleanly'));
+    openAiWs.on('error', (error) => console.error('💥 OpenAI WS error:', error.message));
   });
 });
 
-
-// ----------------------
-// 🚀 START SERVER
-// ----------------------
-fastify.listen({ port: PORT, host: '0.0.0.0' }, (err, address) => {
+// 🚀 Start server
+fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
   if (err) {
     console.error(err);
     process.exit(1);
   }
-  console.log(`✅ Server is running at ${address}`);
+  console.log(`🚀 Server listening on port ${PORT}`);
 });
 
 // ----------------------
-// 🔧 UTILITY FUNCTIONS
+// 🧠 Webhook processing
 // ----------------------
 async function makeChatGPTCompletion(transcript) {
-  console.log('🧩 Starting ChatGPT API call...');
+  console.log('Starting ChatGPT API call...');
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -247,7 +241,10 @@ async function makeChatGPTCompletion(transcript) {
       body: JSON.stringify({
         model: 'gpt-4o-2024-08-06',
         messages: [
-          { role: 'system', content: 'Extract customer details: name, availability, and any special notes from the transcript.' },
+          {
+            role: 'system',
+            content: 'Extract customer details: name, availability, and any special notes from the transcript.'
+          },
           { role: 'user', content: transcript }
         ],
         response_format: {
