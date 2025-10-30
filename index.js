@@ -13,41 +13,17 @@ const { VoiceResponse } = twilio.twiml;
 // Load environment variables
 dotenv.config();
 
-const { OPENAI_API_KEY, WEBHOOK_URL } = process.env;
+const { OPENAI_API_KEY, WEBHOOK_URL, ASSISTANT_ID } = process.env;
 
 if (!OPENAI_API_KEY) {
     console.error('Missing OpenAI API key. Please set it in the .env file.');
     process.exit(1);
 }
 
-// Initialize Fastify
-const fastify = Fastify();
-fastify.register(fastifyFormBody);
-fastify.register(fastifyWs);
-
-// 🧠 Opdateret og høflig dansk prompt
-const SYSTEM_MESSAGE = `
-Du er en AI-receptionist for Dirty Ranch Steakhouse, en hyggelig og stemningsfuld steakrestaurant.
-Din rolle er at tage imod gæster på en venlig, høflig og naturlig måde, og hjælpe dem med reservationer eller forespørgsler.
-
-🗣️ Samtale-stil:
-- Tal som et menneske, roligt, varmt og professionelt.
-- Brug korte, naturlige sætninger, som en venlig receptionist.
-- Vent altid, til gæsten er færdig med at tale, før du svarer.
-- Stop straks med at tale, hvis du hører, at gæsten begynder at tale.
-- Brug små pauser (0,3–0,5 sek.) inden du svarer, så samtalen føles flydende.
-- Brug naturlig dansk grammatik, udtale og navne (fx “Kim” skal ikke oversættes).
-
-🎯 Din opgave:
-Indsaml følgende oplysninger:
-1) Gæstens navn
-2) Dato og tidspunkt for besøget
-3) Antal personer
-4) Eventuelle særlige ønsker (f.eks. allergier, fødselsdag, bordønsker)
-
-Må ikke bede om telefonnummer, e-mail eller anden kontaktinfo.
-Antag altid, at der er ledige borde.
-`;
+// ✅ Agent Builder Assistant ID (kan komme fra .env eller fallback)
+const builderConfig = {
+    assistant_id: ASSISTANT_ID || "wf_6901c643ba408190be2d21093bd57c6205bec43d26407d02"
+};
 
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050;
@@ -111,7 +87,7 @@ fastify.register(async (fastify) => {
             }
         });
 
-        // ✨ Opdateret session-setup med client-managed turns
+        // ✨ Opdateret session-setup med assistant_id i stedet for SYSTEM_MESSAGE
         const sendSessionUpdate = () => {
             const sessionUpdate = {
                 type: 'session.update',
@@ -120,13 +96,13 @@ fastify.register(async (fastify) => {
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
-                    instructions: SYSTEM_MESSAGE,
+                    assistant_id: builderConfig.assistant_id, // 👈 Integreret Agent Builder ID
                     modalities: ["text", "audio"],
                     temperature: 0.8,
                     input_audio_transcription: { model: "whisper-1" }
                 }
             };
-            console.log('Sending session update:', JSON.stringify(sessionUpdate));
+            console.log('Sending session update with Assistant:', JSON.stringify(sessionUpdate));
             openAiWs.send(JSON.stringify(sessionUpdate));
         };
 
@@ -150,7 +126,9 @@ fastify.register(async (fastify) => {
                 }
 
                 if (response.type === 'response.done') {
-                    const agentMessage = response.response.output[0]?.content?.find(c => c.transcript)?.transcript || 'Agent message not found';
+                    const agentMessage =
+                        response.response.output[0]?.content?.find(c => c.transcript)?.transcript ||
+                        'Agent message not found';
                     session.transcript += `Agent: ${agentMessage}\n`;
                     console.log(`Agent (${sessionId}): ${agentMessage}`);
                 }
