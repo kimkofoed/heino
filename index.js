@@ -33,7 +33,7 @@ await fastify.register(fastifyWs);
 // ⚙️ BASIC CONFIG
 // ----------------------
 const builderConfig = {
-  assistant_id: ASSISTANT_ID || "wf_6901c643ba408190be2d21093bd57c6205bec43d26407d02"
+  assistant_id: ASSISTANT_ID
 };
 
 const VOICE = 'alloy';
@@ -132,48 +132,54 @@ fastify.register(async (fastify) => {
     };
 
     openAiWs.on('open', () => {
-      console.log('✅ Connected to OpenAI Realtime API');
-      setTimeout(sendSessionUpdate, 300);
+    console.log('✅ Connected to OpenAI Realtime API');
+    // ⛔ Fjernet setTimeout — vi venter på session.created i stedet
     });
 
     openAiWs.on('message', (data) => {
-      try {
+    try {
         const response = JSON.parse(data);
 
+        // 🟢 Når session er klar → send opdatering
+        if (response.type === 'session.created') {
+        console.log('✅ Session created — sending update with g711_ulaw');
+        sendSessionUpdate();
+        }
+
         if (LOG_EVENT_TYPES.includes(response.type)) {
-          console.log(`📨 Received event: ${response.type}`, response);
+        console.log(`📨 Received event: ${response.type}`, response);
         }
 
         if (response.type === 'conversation.item.input_audio_transcription.completed') {
-          const userMessage = response.transcript.trim();
-          session.transcript += `User: ${userMessage}\n`;
-          console.log(`👤 User (${sessionId}): ${userMessage}`);
+        const userMessage = response.transcript.trim();
+        session.transcript += `User: ${userMessage}\n`;
+        console.log(`👤 User (${sessionId}): ${userMessage}`);
         }
 
         if (response.type === 'response.done') {
-          const agentMessage =
+        const agentMessage =
             response.response.output[0]?.content?.find(c => c.transcript)?.transcript ||
             'Agent message not found';
-          session.transcript += `Agent: ${agentMessage}\n`;
-          console.log(`🤖 Agent (${sessionId}): ${agentMessage}`);
+        session.transcript += `Agent: ${agentMessage}\n`;
+        console.log(`🤖 Agent (${sessionId}): ${agentMessage}`);
         }
 
         // 🎧 Send lyd tilbage til Twilio
         if (response.type === 'response.audio.delta' && response.delta) {
-          const audioDelta = {
+        const audioDelta = {
             event: 'media',
             streamSid: session.streamSid,
-            media: { payload: response.delta } // ⚠️ allerede base64-encoded
-          };
-          connection.send(JSON.stringify(audioDelta));
+            media: { payload: response.delta } // allerede base64-encoded
+        };
+        connection.send(JSON.stringify(audioDelta));
         }
 
         if (response.type === 'session.updated') {
-          console.log('✅ Session updated successfully:', response);
+        console.log('✅ Session updated successfully:', response);
         }
-      } catch (error) {
+    } catch (error) {
         console.error('❌ Error processing OpenAI message:', error, 'Raw:', data);
-      }
+    }
     });
 
     // 🎙️ Twilio sender lyd → OpenAI input buffer
