@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
 import { z } from "zod";
-import { RealtimeAgent, RealtimeSession, tool } from "@openai/agents";
+import { RealtimeAgent, RealtimeSession, tool } from "@openai/agents/realtime";
 import { TwilioRealtimeTransportLayer } from "@openai/agents-extensions";
 
 dotenv.config();
