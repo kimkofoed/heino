@@ -89,30 +89,43 @@ fastify.register(async (fastify) => {
       console.log('✅ Connected to OpenAI Realtime API');
       heartbeat();
 
-      const sessionUpdate = {
+        const sessionUpdate = {
         type: 'session.update',
         session: {
-          assistant_id: ASSISTANT_ID, // ← Your wf_... Agent Builder workflow
-          input_audio_format: 'g711_ulaw',
-          output_audio_format: 'g711_ulaw',
-          voice: VOICE,
-          modalities: ['audio', 'text'],
-          input_audio_transcription: { model: 'whisper-1' },
-          tools: [
+            assistant_id: ASSISTANT_ID,
+            input_audio_format: 'g711_ulaw',
+            output_audio_format: 'g711_ulaw',
+            voice: VOICE,
+            modalities: ['audio', 'text'],
+            input_audio_transcription: { model: 'whisper-1' },
+            instructions: `
+            Du er en dansk telefonassistent for Dirty Ranch Steakhouse.
+            Hver gang brugeren siger noget, skal du KALDE funktionen call_restaurant_workflow 
+            med hele den transskriberede tekst som user_text.
+            Brug svaret fra workflowet som dit svar til brugeren.
+            Svar altid naturligt og venligt på dansk.
+            `,
+            tools: [
             {
-              name: 'call_restaurant_workflow',
-              description: 'Send text to the restaurant workflow and get a reply.',
-              parameters: {
+                name: 'call_restaurant_workflow',
+                description: 'Sender tekst til restaurantens workflow og returnerer svaret.',
+                parameters: {
                 type: 'object',
                 properties: {
-                  user_text: { type: 'string', description: 'What the user said' }
+                    user_text: { type: 'string', description: 'Hvad brugeren sagde' }
                 },
                 required: ['user_text']
-              }
+                }
             }
-          ]
+            ],
+            // (valgfrit men hjælpsomt)
+            tool_choice: {
+            type: "function",
+            function: { name: "call_restaurant_workflow" }
+            }
         }
-      };
+    };
+
 
       openAiWs.send(JSON.stringify(sessionUpdate));
       console.log('🧠 Sent session update with assistant_id + bridge tool');
